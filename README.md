@@ -1,2 +1,2 @@
 # Helicopter_toolbox
-Helicopter tools for trim calculation 
+Helicopter tools for trim calculation using python

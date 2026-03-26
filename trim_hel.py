@@ -1,5 +1,6 @@
 import numpy as np
 import sympy as sp
+import math
 ####### TRIM HELICOPTER CALCULATOR  #######
 ####### NO TAIL EFFECT ####################
 ####### mu=fixed value ####################
@@ -54,8 +55,8 @@ def calculate_hcd(p,lambdad,a1):
 def calculate_a0(p,theta0,lambdad):
     a0=p["gamma"]/8*((theta0*1-19/18*p["mu"]**2+3/2*p["mu"]**2)/(1+3/2*p["mu"]**2)+4/3*lambdad*(1-p["mu"]**2/2)/(1+3/2*p["mu"]**2))
     return a0
-def calculate_b1(p,alpha_d,a0,lambdai):
-    ni=(1-np.sin(alpha_d))/(1+np.sin(alpha_d))
+def calculate_b1(p,alpha_d,a0,lambdai,):
+    ni=(1-np.sin(alpha_d))/(1+np.sin(alpha_d))                          
     b1=(4/3*(p["mu"]*a0+1.1*ni**0.5*lambdai))/(1+p["mu"]**2/2)
     return b1
 def calculate_qc(p,lambdad,wc,hcd):
@@ -75,6 +76,57 @@ def calculate_theta(B1,a1,f1,hcd,wc):
     #f1=0.5*d0*mu^2
     theta=B1-a1-hcd/wc-f1/wc
     return theta
+def calculate_epsilon(p,lambda_i):
+    epsilon0=lambda_i/p["mu"]
+    return epsilon0
+def calculate_B1_with_tail(p,a1,sA,hcd,wc,alpha_d,epsilon0,f=None,):
+    if f==None:
+        f=0
+    alpha_t0_rad = math.radians(params["alpha_t0"])
+    Cmf=0
+    Cms=p["b"]*p["Mb"]*p["xg"]*p["e"]/(2*p["rho"]*sA*p["R"])
+    kt=1+0.5*p["mu"]**2*p["Vt"]*p["at"]/(wc*p["h"]+Cms)
+    B1=a1+(Cmf+hcd*p["h"]-wc*f-0.5*p["mu"]**2*p["Vt"]*p["at"]*(alpha_d+alpha_t0_rad-epsilon0))/kt*(wc*p["h"]+Cms)
+    return B1
+def calculate_A1(p,b1,Tt,wc,f=None):
+    if f==None:
+        f=0
+    Cms=p["b"]*p["Mb"]*p["xg"]*p["e"]/(2*p["rho"]*sA*p["R"])
+    A1=-b1-(wc*f+Tt/p["W"]*wc*p["ht"])/(wc*p["h"]+Cms)
+    return A1
+def calculate_phi(p,b1,A1,Tt):
+    phi=-b1-A1-Tt/p["W"]
+    return phi
+def calculate_lambda_i_t(p,Tt):
+    stAt=p["st"]*np.pi*(p["Rt"])**2
+    ###supose same tip speed of main rotor and tail rotor sigmaR=sigmaRt
+    tct=Tt/(0.5*p["rho"]*stAt*p["sigmaR"]**2)
+    lambdait0=math.sqrt(p["st"]*tct/2)
+    lambdait005=p["st"]*tct/2*p["mu"] 
+    if p["mu"]==0:
+        lambdait=lambdait0
+    elif p["mu"]>0.05:
+        lambdait=lambdait005 #### it has been considered that mu=mu_t
+    elif 0<p["mu"]<0.05:
+        lambdait = lambdait0 + (lambdait005 - lambdait0) * (p["mu"] / 0.05)
+    return tct,lambdait
+def calculate_theta_zero_t(p,tct,lambdait):
+    theta0_t=3/(2*(1+3/2*p["mu"]**2))*(4/p["a"]*tct-lambdait)
+    return theta0_t
+def calculate_profile_power(p, sA):
+    Pp=(p["delta"]/8) * p["rho"] * sA * p["sigmaR"]**3 * (1 + 3*p["mu"]**2)
+    return Pp
+def calculate_parasite_power(p):
+    V = p["mu"] * p["sigmaR"]
+    P_p=0.5 * p["rho"] * p["Sfp"] * V**3
+    return P_p
+def calculate_power_tail_rotor(p,lambdait,tct):
+    stAt=p["st"]*np.pi*(p["Rt"])**2
+    Pt=(p["delta"]/8*(1+3*p["mu"]**2)+lambdait*tct)*p["rho"]*stAt*p["sigmaR"]**3
+    return Pt
+def calculate_induced_power(p,vi0):
+    Pi=(1+p["k"])*p["W"]*vi0
+    return Pi
 if __name__ == "__main__":
     #========================
     #Helicopter parameters
@@ -83,7 +135,7 @@ if __name__ == "__main__":
         "W":45000,
         "s":0.05 ,  # solidity
         "R":8,
-        "h":0.25,
+        "h":0.25,   ###for main rotor
         "delta":0.013,
         "sigmaR":208,
         "Sfp":2.3,
@@ -94,7 +146,17 @@ if __name__ == "__main__":
         "e":0.04,
         "mu":0.3,   #tip speed ratio
         "rho":1.225,
-        "gamma":6
+        "gamma":6,
+        "alpha_t0":12,  ###degree
+        "Vt":0.1,       ####tail volume ration st*lt/s*A
+        "at":3.5,
+        "tt":11,         ###### secondary rotor tail arm (lt*R)    
+        "ht":0.2,
+        "st":0.1,        ###### solidity of tail rotor   
+        "Rt":1.4,         ###### tail rotor radius
+        "k":0.17
+
+        
     }
     sA,d0,wc,f1,v0=calculate_missing_values(params)
     solution=solve_vi0(params,v0)  ####solve equation for vi
@@ -145,7 +207,25 @@ if __name__ == "__main__":
     lambdai=(vi0/v0)*v0/params["sigmaR"]
     b1=calculate_b1(params,alpha_d,a0,lambdai)
     qc=calculate_qc(params,lambdad,wc,hcd)
-    Q=qc*params["rho"]*sA*params["sigmaR"]**2*params["R"] #torque
-    power=params["W"]*vi0                                 #Power
+    Q=qc*params["rho"]*sA*params["sigmaR"]**2*params["R"] #torque                               
     B1=calculate_B1(params,a1,sA,hcd,wc,f=None)   ###f is c.g position
     theta=calculate_theta(B1,a1,f1,hcd,wc)
+    #========================================
+    #TAIL PLANE INFLUENCE
+    #========================================
+    epsilon0=calculate_epsilon(params,lambdai)
+    B1_tail=calculate_B1_with_tail(params,a1,sA,hcd,wc,alpha_d,epsilon0,f=None,)
+    
+    #=========================================
+    #Lateral control to trim
+    #=========================================
+    Tt=Q/params["tt"]
+    A1=calculate_A1(params,b1,Tt,wc,f=None)
+    phi=calculate_phi(params,b1,A1,Tt)
+    [tct,lambdait]=calculate_lambda_i_t(params,Tt)
+    theta0_t=calculate_theta_zero_t(params,tct,lambdait)
+    Pi=calculate_induced_power(params,vi0)    #### Induced Power
+    Pp=calculate_profile_power(params, sA)    #### profile power
+    P_p=calculate_parasite_power(params)      #### parasite power
+    Pt=calculate_power_tail_rotor(params,lambdait,tct)   #####tail rotor
+    Ptotal = Pi + Pp + P_p + Pt
